@@ -19,7 +19,7 @@ Upload any PDF and the app will:
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Streamlit |
-| AI / LLM | Google Gemini 2.0 Flash (free) |
+| AI / LLM | Google Gemini 2.0 Flash-Lite via `google-genai` (free tier) |
 | PDF Parsing | pdfplumber |
 | Web Search | DuckDuckGo Search (free, no key needed) |
 | Deployment | Streamlit Cloud (free) |

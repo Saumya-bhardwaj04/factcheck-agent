@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import pdfplumber
 import json
 import time
@@ -15,12 +15,13 @@ st.set_page_config(
 )
 
 # Load API key from Streamlit secrets (set in Streamlit Cloud dashboard)
+MODEL_NAME = "gemini-2.0-flash-lite"
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+    client = genai.Client(api_key=API_KEY)
     api_ready = True
 except Exception:
+    client = None
     api_ready = False
 
 # ── Styles ─────────────────────────────────────────────────────────────────────
@@ -84,7 +85,7 @@ st.markdown("""
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🔍 FactCheck Agent")
-    st.markdown("Verifies claims in any PDF using **Gemini 1.5 Flash** + live web search.")
+    st.markdown("Verifies claims in any PDF using **Gemini 2.0 Flash-Lite** + live web search.")
     st.divider()
 
     if api_ready:
@@ -118,10 +119,31 @@ def read_pdf(uploaded_file) -> str:
 
 
 def call_gemini(prompt: str, retries: int = 3) -> str:
+    if client is None:
+        raise RuntimeError("Gemini client is not initialized.")
+
     for attempt in range(retries):
         try:
-            response = model.generate_content(prompt)
-            return response.text.strip()
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+            )
+
+            text = (getattr(response, "text", None) or "").strip()
+            if text:
+                return text
+
+            parts = []
+            for candidate in (getattr(response, "candidates", None) or []):
+                content = getattr(candidate, "content", None)
+                for part in (getattr(content, "parts", None) or []):
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        parts.append(part_text)
+            if parts:
+                return "\n".join(parts).strip()
+
+            raise RuntimeError("Gemini returned an empty response.")
         except Exception as e:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
