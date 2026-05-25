@@ -18,6 +18,8 @@ st.set_page_config(
 # Load API key from Streamlit secrets (set in Streamlit Cloud dashboard)
 MODEL_NAME = "gemini-2.0-flash-lite"
 DEFAULT_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+MAX_CLAIMS = 5
+MAX_SOURCES_PER_CLAIM = 2
 
 # ── Styles ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -209,7 +211,7 @@ Each item must have:
 - "category": one of Statistic | Date | Financial | Technical | Attribution | Ranking
 - "context": brief surrounding context (max 80 chars)
 
-Extract up to 12 claims.
+Extract up to {MAX_CLAIMS} claims.
 
 TEXT:
 {text[:5000]}
@@ -217,7 +219,8 @@ TEXT:
 JSON:"""
 
     raw = call_gemini(prompt)
-    return json.loads(clean_json(raw))
+    claims = json.loads(clean_json(raw))
+    return claims[:MAX_CLAIMS]
 
 
 def web_search(query: str, n: int = 4) -> list:
@@ -268,6 +271,77 @@ JSON:"""
 
 
 # ── UI helpers ─────────────────────────────────────────────────────────────────
+
+def verify_claims_batch(claims: list, search_map: dict) -> list:
+    payload = []
+    for i, claim in enumerate(claims):
+        hits = search_map.get(i, [])[:MAX_SOURCES_PER_CLAIM]
+        payload.append({
+            "id": i,
+            "claim": claim.get("claim", ""),
+            "category": claim.get("category", ""),
+            "context": claim.get("context", ""),
+            "sources": [
+                {
+                    "title": h.get("title", "")[:140],
+                    "url": h.get("href", ""),
+                    "snippet": h.get("body", "")[:240],
+                }
+                for h in hits
+            ],
+        })
+
+    prompt = f"""You are a professional fact-checker.
+Verify each claim using its provided web sources.
+
+Input JSON:
+{json.dumps(payload, ensure_ascii=True)}
+
+Return ONLY a JSON array with one object per input item, in any order.
+Each object must have:
+- "id": matching input id (integer)
+- "verdict": "Verified" | "Inaccurate" | "False" | "Unverifiable"
+- "explanation": 1-2 short sentences
+- "correct_value": corrected fact if wrong, else null
+- "source_url": best supporting/contradicting URL, else null
+- "confidence": "High" | "Medium" | "Low"
+
+No markdown. No code fences."""
+
+    raw = call_gemini(prompt)
+    items = json.loads(clean_json(raw))
+
+    by_id = {
+        int(item.get("id")): item for item in items
+        if isinstance(item, dict) and str(item.get("id", "")).isdigit()
+    }
+
+    normalized = []
+    valid_verdicts = {"Verified", "Inaccurate", "False", "Unverifiable"}
+    valid_conf = {"High", "Medium", "Low"}
+
+    for i, claim in enumerate(claims):
+        item = by_id.get(i, {})
+        verdict = item.get("verdict", "Unverifiable")
+        confidence = item.get("confidence", "Low")
+        if verdict not in valid_verdicts:
+            verdict = "Unverifiable"
+        if confidence not in valid_conf:
+            confidence = "Low"
+
+        normalized.append({
+            "claim": claim.get("claim", "Unknown"),
+            "category": claim.get("category", ""),
+            "context": claim.get("context", ""),
+            "verdict": verdict,
+            "explanation": item.get("explanation", "Insufficient evidence from available sources."),
+            "correct_value": item.get("correct_value"),
+            "source_url": item.get("source_url"),
+            "confidence": confidence,
+        })
+
+    return normalized
+
 
 def verdict_badge(verdict: str) -> str:
     icons = {
@@ -354,24 +428,26 @@ if uploaded_file:
             results  = []
             progress = st.progress(0)
 
+            search_map = {}
             for i, claim in enumerate(claims):
-                try:
-                    hits     = web_search(claim["claim"])
-                    verified = verify_claim(claim, hits)
-                    results.append(verified)
-                except Exception as ex:
-                    results.append({
-                        "claim":         claim.get("claim", "Unknown"),
-                        "category":      claim.get("category", ""),
-                        "context":       claim.get("context", ""),
-                        "verdict":       "Unverifiable",
-                        "explanation":   f"Verification error: {str(ex)[:80]}",
-                        "correct_value": None,
-                        "source_url":    None,
-                        "confidence":    "Low",
-                    })
-                progress.progress((i + 1) / len(claims))
-                time.sleep(1.5)  # stay within free-tier rate limits
+                search_map[i] = web_search(claim.get("claim", ""), n=MAX_SOURCES_PER_CLAIM)
+                progress.progress((i + 1) / max(1, len(claims)))
+                time.sleep(0.4)
+
+            st.write("🤖 Running one Gemini batch verification call...")
+            try:
+                results = verify_claims_batch(claims, search_map)
+            except Exception as ex:
+                results = [{
+                    "claim": claim.get("claim", "Unknown"),
+                    "category": claim.get("category", ""),
+                    "context": claim.get("context", ""),
+                    "verdict": "Unverifiable",
+                    "explanation": f"Batch verification error: {str(ex)[:140]}",
+                    "correct_value": None,
+                    "source_url": None,
+                    "confidence": "Low",
+                } for claim in claims]
 
             status.update(label="✅ Done!", state="complete", expanded=False)
 
