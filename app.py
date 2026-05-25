@@ -1,12 +1,10 @@
 import io
 import json
-import re
 import time
 
 import pdfplumber
 import streamlit as st
 from duckduckgo_search import DDGS
-from google import genai
 from groq import Groq
 
 
@@ -17,12 +15,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-GEMINI_MODEL = "gemini-2.0-flash-lite"
 GROQ_MODEL = "llama-3.1-8b-instant"
 MAX_CLAIMS = 5
 MAX_SOURCES_PER_CLAIM = 2
 
-DEFAULT_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 DEFAULT_GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
 
 
@@ -109,78 +105,20 @@ with st.sidebar:
     st.markdown("## 🔍 FactCheck Agent")
     st.markdown("Verify claims in a PDF using live web search + fast LLM checks.")
     st.divider()
-
-    provider = st.selectbox("LLM Provider", ["Groq", "Gemini"], index=0)
-
-    groq_key = st.text_input(
-        "Groq API key",
-        value="",
-        type="password",
-        help="Recommended for this app if Gemini free-tier is rate-limited.",
-    ).strip() or DEFAULT_GROQ_API_KEY
-    groq_model = st.text_input(
-        "Groq model",
-        value=GROQ_MODEL,
-        help="Change this if your Groq project restricts model permissions.",
-    ).strip() or GROQ_MODEL
-
-    gemini_key = st.text_input(
-        "Gemini API key",
-        value="",
-        type="password",
-        help="Optional fallback.",
-    ).strip() or DEFAULT_GEMINI_API_KEY
-
     groq_client = None
-    gemini_client = None
     groq_error = ""
-    gemini_error = ""
-
-    if groq_key:
+    if DEFAULT_GROQ_API_KEY:
         try:
-            groq_client = Groq(api_key=groq_key)
+            groq_client = Groq(api_key=DEFAULT_GROQ_API_KEY)
         except Exception as e:
             groq_error = str(e)
-    if gemini_key:
-        try:
-            gemini_client = genai.Client(api_key=gemini_key)
-        except Exception as e:
-            gemini_error = str(e)
 
-    if provider == "Groq":
-        api_ready = groq_client is not None
-        model_name = groq_model
-        if api_ready:
-            st.success("✅ Groq API Connected")
-        else:
-            st.error(f"❌ Groq key missing/invalid. {groq_error[:120]}")
+    api_ready = groq_client is not None
+    model_name = GROQ_MODEL
+    if api_ready:
+        st.success("✅ Groq API Key Activated")
     else:
-        api_ready = gemini_client is not None
-        model_name = GEMINI_MODEL
-        if api_ready:
-            st.success("✅ Gemini API Connected")
-        else:
-            st.error(f"❌ Gemini key missing/invalid. {gemini_error[:120]}")
-
-    if api_ready and st.button("Test API key now", use_container_width=True):
-        try:
-            if provider == "Groq":
-                probe = groq_client.chat.completions.create(
-                    model=groq_model,
-                    messages=[{"role": "user", "content": "Reply with exactly: OK"}],
-                    temperature=0,
-                    max_tokens=12,
-                )
-                text = (probe.choices[0].message.content or "").strip()
-            else:
-                probe = gemini_client.models.generate_content(
-                    model=GEMINI_MODEL,
-                    contents="Reply with exactly: OK",
-                )
-                text = (getattr(probe, "text", None) or "").strip()
-            st.success(f"Provider test passed: {text or 'OK'}")
-        except Exception as probe_err:
-            st.error(f"Provider test failed: {probe_err}")
+        st.error(f"❌ Groq API Key Missing/Invalid in secrets. {groq_error[:120]}")
 
     st.divider()
     st.markdown("**How it works:**")
@@ -191,64 +129,34 @@ with st.sidebar:
 
 
 def call_llm(prompt: str, retries: int = 3) -> str:
-    if provider == "Groq":
-        if groq_client is None:
-            raise RuntimeError("Groq client is not initialized.")
-        last_error = ""
-        for attempt in range(retries):
-            try:
-                resp = groq_client.chat.completions.create(
-                    model=groq_model,
-                    messages=[
-                        {"role": "system", "content": "Return exactly the requested output format."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=2400,
-                )
-                text = (resp.choices[0].message.content or "").strip()
-                if text:
-                    return text
-                raise RuntimeError("Groq returned an empty response.")
-            except Exception as e:
-                err = str(e)
-                last_error = err
-                if "429" in err or "rate limit" in err.lower():
-                    wait = 4 * (attempt + 1)
-                    st.warning(f"Rate limit hit - waiting {wait}s before retry {attempt+1}/{retries}...")
-                    time.sleep(wait)
-                else:
-                    raise
-        raise RuntimeError(f"Groq API failed after retries. Last error: {last_error[:180]}")
-
-    if gemini_client is None:
-        raise RuntimeError("Gemini client is not initialized.")
-
+    if groq_client is None:
+        raise RuntimeError("Groq client is not initialized.")
     last_error = ""
     for attempt in range(retries):
         try:
-            response = gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=prompt,
+            resp = groq_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": "Return exactly the requested output format."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.1,
+                max_tokens=2400,
             )
-            text = (getattr(response, "text", None) or "").strip()
+            text = (resp.choices[0].message.content or "").strip()
             if text:
                 return text
-            raise RuntimeError("Gemini returned an empty response.")
+            raise RuntimeError("Groq returned an empty response.")
         except Exception as e:
             err = str(e)
             last_error = err
-            if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                retry_hint = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", err, flags=re.IGNORECASE)
-                if retry_hint:
-                    wait = max(5, int(float(retry_hint.group(1)) + 2))
-                else:
-                    wait = 20 * (attempt + 1)
+            if "429" in err or "rate limit" in err.lower():
+                wait = 4 * (attempt + 1)
                 st.warning(f"Rate limit hit - waiting {wait}s before retry {attempt+1}/{retries}...")
                 time.sleep(wait)
             else:
                 raise
-    raise RuntimeError(f"Gemini API failed after retries. Last error: {last_error[:180]}")
+    raise RuntimeError(f"Groq API failed after retries. Last error: {last_error[:180]}")
 
 
 def extract_claims(text: str) -> list:
@@ -425,14 +333,14 @@ st.markdown("Upload any PDF and get key claims verified against live web data.")
 st.divider()
 
 if not api_ready:
-    st.error("API key not configured for selected provider. Add keys in sidebar or Streamlit secrets.")
+    st.error("Groq API key not configured. Add `GROQ_API_KEY` in Streamlit secrets.")
     st.stop()
 
 uploaded_file = st.file_uploader("📂 Drop your PDF here", type=["pdf"])
 
 if uploaded_file:
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col2:
+    left_col, btn_col = st.columns([6.5, 2])
+    with btn_col:
         run = st.button("🚀 Run Fact Check", use_container_width=True)
 
     if run:
@@ -449,7 +357,7 @@ if uploaded_file:
                 st.error(f"PDF error: {e}")
                 st.stop()
 
-            st.write(f"🤖 Extracting claims with {provider}...")
+            st.write("🤖 Extracting claims with Groq...")
             try:
                 claims = extract_claims(pdf_text)
                 st.write(f"✅ Found **{len(claims)} claims** to verify")
@@ -465,7 +373,7 @@ if uploaded_file:
                 progress.progress((i + 1) / max(1, len(claims)))
                 time.sleep(0.25)
 
-            st.write(f"🤖 Verifying claims in one {provider} batch call...")
+            st.write("🤖 Verifying claims in one Groq batch call...")
             try:
                 results = verify_claims_batch(claims, search_map)
             except Exception as ex:
