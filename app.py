@@ -1,13 +1,15 @@
-import streamlit as st
-from google import genai
-import pdfplumber
-import json
-import time
 import io
+import json
 import re
-from duckduckgo_search import DDGS
+import time
 
-# ── Setup ──────────────────────────────────────────────────────────────────────
+import pdfplumber
+import streamlit as st
+from duckduckgo_search import DDGS
+from google import genai
+from groq import Groq
+
+
 st.set_page_config(
     page_title="FactCheck Agent",
     page_icon="🔍",
@@ -15,14 +17,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Load API key from Streamlit secrets (set in Streamlit Cloud dashboard)
-MODEL_NAME = "gemini-2.0-flash-lite"
-DEFAULT_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = "gemini-2.0-flash-lite"
+GROQ_MODEL = "llama-3.1-8b-instant"
 MAX_CLAIMS = 5
 MAX_SOURCES_PER_CLAIM = 2
 
-# ── Styles ─────────────────────────────────────────────────────────────────────
-st.markdown("""
+DEFAULT_GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+DEFAULT_GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+
+
+st.markdown(
+    """
 <style>
     .stApp { background-color: #0f172a; }
 
@@ -76,62 +81,10 @@ st.markdown("""
     section[data-testid="stSidebar"] { background:#1e293b !important; }
     section[data-testid="stSidebar"] * { color:#cbd5e1 !important; }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-
-# ── Sidebar ────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## 🔍 FactCheck Agent")
-    st.markdown("Verifies claims in any PDF using **Gemini 2.0 Flash-Lite** + live web search.")
-    st.divider()
-
-    user_api_key = st.text_input(
-        "Gemini API key (optional override)",
-        type="password",
-        help="Use your own key if the shared app key is rate-limited.",
-    ).strip()
-    active_api_key = user_api_key or DEFAULT_API_KEY
-
-    try:
-        client = genai.Client(api_key=active_api_key) if active_api_key else None
-        api_ready = client is not None
-    except Exception:
-        client = None
-        api_ready = False
-
-    if api_ready:
-        if user_api_key:
-            st.success("✅ Gemini API Connected (personal key)")
-        else:
-            st.success("✅ Gemini API Connected")
-
-        if st.button("Test API key now", use_container_width=True):
-            try:
-                probe = client.models.generate_content(
-                    model=MODEL_NAME,
-                    contents="Reply with exactly: OK",
-                )
-                probe_text = (getattr(probe, "text", None) or "").strip()
-                st.success(f"Gemini test passed: {probe_text or 'OK'}")
-            except Exception as probe_err:
-                st.error(f"Gemini test failed: {probe_err}")
-    else:
-        st.error("❌ API key missing/invalid — add `GEMINI_API_KEY` in Streamlit secrets or paste a personal key above.")
-
-    st.divider()
-    st.markdown("**How it works:**")
-    st.markdown("1. 📄 Upload a PDF")
-    st.markdown("2. 🤖 Gemini extracts all verifiable claims")
-    st.markdown("3. 🌐 Each claim gets searched on the web")
-    st.markdown("4. ✅ Every claim is flagged as Verified / Inaccurate / False")
-    st.divider()
-    st.markdown("✅ **Verified** — Confirmed by sources")
-    st.markdown("⚠️ **Inaccurate** — Wrong numbers or dates")
-    st.markdown("❌ **False** — Contradicted by evidence")
-    st.markdown("🔵 **Unverifiable** — Not enough info found")
-
-
-# ── Core functions ─────────────────────────────────────────────────────────────
 
 def read_pdf(uploaded_file) -> str:
     text = ""
@@ -143,54 +96,6 @@ def read_pdf(uploaded_file) -> str:
     return text.strip()
 
 
-def call_gemini(prompt: str, retries: int = 3) -> str:
-    if client is None:
-        raise RuntimeError("Gemini client is not initialized.")
-
-    last_error = ""
-    for attempt in range(retries):
-        try:
-            response = client.models.generate_content(
-                model=MODEL_NAME,
-                contents=prompt,
-            )
-
-            text = (getattr(response, "text", None) or "").strip()
-            if text:
-                return text
-
-            parts = []
-            for candidate in (getattr(response, "candidates", None) or []):
-                content = getattr(candidate, "content", None)
-                for part in (getattr(content, "parts", None) or []):
-                    part_text = getattr(part, "text", None)
-                    if part_text:
-                        parts.append(part_text)
-            if parts:
-                return "\n".join(parts).strip()
-
-            raise RuntimeError("Gemini returned an empty response.")
-        except Exception as e:
-            err = str(e)
-            last_error = err
-            if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                retry_hint = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", err, flags=re.IGNORECASE)
-                if retry_hint:
-                    wait = max(5, int(float(retry_hint.group(1)) + 2))
-                else:
-                    wait = 20 * (attempt + 1)  # 20s, 40s, 60s fallback
-                st.warning(f"Rate limit hit — waiting {wait}s before retry {attempt+1}/{retries}...")
-                time.sleep(wait)
-            else:
-                raise
-    if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
-        raise RuntimeError(
-            "Gemini API quota/rate limit reached (HTTP 429). "
-            "Wait for reset in AI Studio Usage, or use another API key."
-        )
-    raise RuntimeError(f"Gemini API failed after all retries. Last error: {last_error[:180]}")
-
-
 def clean_json(raw: str) -> str:
     if "```" in raw:
         parts = raw.split("```")
@@ -200,25 +105,169 @@ def clean_json(raw: str) -> str:
     return raw.strip()
 
 
+with st.sidebar:
+    st.markdown("## 🔍 FactCheck Agent")
+    st.markdown("Verify claims in a PDF using live web search + fast LLM checks.")
+    st.divider()
+
+    provider = st.selectbox("LLM Provider", ["Groq", "Gemini"], index=0)
+
+    groq_key = st.text_input(
+        "Groq API key",
+        value="",
+        type="password",
+        help="Recommended for this app if Gemini free-tier is rate-limited.",
+    ).strip() or DEFAULT_GROQ_API_KEY
+    groq_model = st.text_input(
+        "Groq model",
+        value=GROQ_MODEL,
+        help="Change this if your Groq project restricts model permissions.",
+    ).strip() or GROQ_MODEL
+
+    gemini_key = st.text_input(
+        "Gemini API key",
+        value="",
+        type="password",
+        help="Optional fallback.",
+    ).strip() or DEFAULT_GEMINI_API_KEY
+
+    groq_client = None
+    gemini_client = None
+    groq_error = ""
+    gemini_error = ""
+
+    if groq_key:
+        try:
+            groq_client = Groq(api_key=groq_key)
+        except Exception as e:
+            groq_error = str(e)
+    if gemini_key:
+        try:
+            gemini_client = genai.Client(api_key=gemini_key)
+        except Exception as e:
+            gemini_error = str(e)
+
+    if provider == "Groq":
+        api_ready = groq_client is not None
+        model_name = groq_model
+        if api_ready:
+            st.success("✅ Groq API Connected")
+        else:
+            st.error(f"❌ Groq key missing/invalid. {groq_error[:120]}")
+    else:
+        api_ready = gemini_client is not None
+        model_name = GEMINI_MODEL
+        if api_ready:
+            st.success("✅ Gemini API Connected")
+        else:
+            st.error(f"❌ Gemini key missing/invalid. {gemini_error[:120]}")
+
+    if api_ready and st.button("Test API key now", use_container_width=True):
+        try:
+            if provider == "Groq":
+                probe = groq_client.chat.completions.create(
+                    model=groq_model,
+                    messages=[{"role": "user", "content": "Reply with exactly: OK"}],
+                    temperature=0,
+                    max_tokens=12,
+                )
+                text = (probe.choices[0].message.content or "").strip()
+            else:
+                probe = gemini_client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents="Reply with exactly: OK",
+                )
+                text = (getattr(probe, "text", None) or "").strip()
+            st.success(f"Provider test passed: {text or 'OK'}")
+        except Exception as probe_err:
+            st.error(f"Provider test failed: {probe_err}")
+
+    st.divider()
+    st.markdown("**How it works:**")
+    st.markdown("1. Upload a PDF")
+    st.markdown("2. LLM extracts key verifiable claims")
+    st.markdown("3. Each claim is web searched")
+    st.markdown("4. LLM returns verdicts in one batch")
+
+
+def call_llm(prompt: str, retries: int = 3) -> str:
+    if provider == "Groq":
+        if groq_client is None:
+            raise RuntimeError("Groq client is not initialized.")
+        last_error = ""
+        for attempt in range(retries):
+            try:
+                resp = groq_client.chat.completions.create(
+                    model=groq_model,
+                    messages=[
+                        {"role": "system", "content": "Return exactly the requested output format."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=2400,
+                )
+                text = (resp.choices[0].message.content or "").strip()
+                if text:
+                    return text
+                raise RuntimeError("Groq returned an empty response.")
+            except Exception as e:
+                err = str(e)
+                last_error = err
+                if "429" in err or "rate limit" in err.lower():
+                    wait = 4 * (attempt + 1)
+                    st.warning(f"Rate limit hit - waiting {wait}s before retry {attempt+1}/{retries}...")
+                    time.sleep(wait)
+                else:
+                    raise
+        raise RuntimeError(f"Groq API failed after retries. Last error: {last_error[:180]}")
+
+    if gemini_client is None:
+        raise RuntimeError("Gemini client is not initialized.")
+
+    last_error = ""
+    for attempt in range(retries):
+        try:
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+            )
+            text = (getattr(response, "text", None) or "").strip()
+            if text:
+                return text
+            raise RuntimeError("Gemini returned an empty response.")
+        except Exception as e:
+            err = str(e)
+            last_error = err
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                retry_hint = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", err, flags=re.IGNORECASE)
+                if retry_hint:
+                    wait = max(5, int(float(retry_hint.group(1)) + 2))
+                else:
+                    wait = 20 * (attempt + 1)
+                st.warning(f"Rate limit hit - waiting {wait}s before retry {attempt+1}/{retries}...")
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError(f"Gemini API failed after retries. Last error: {last_error[:180]}")
+
+
 def extract_claims(text: str) -> list:
-    prompt = f"""You are a fact-checking assistant. Read the text below and extract the most important, verifiable claims.
+    prompt = f"""You are a fact-checking assistant.
+Extract the most important verifiable claims from the text below.
 
-Look for: statistics, percentages, dates, financial figures, named attributions, technical specs, rankings.
-
-Return ONLY a JSON array — no markdown, no explanation, no code fences.
-Each item must have:
-- "claim": the exact claim (string)
-- "category": one of Statistic | Date | Financial | Technical | Attribution | Ranking
-- "context": brief surrounding context (max 80 chars)
-
-Extract up to {MAX_CLAIMS} claims.
+Rules:
+- Return ONLY a JSON array.
+- No markdown. No extra text.
+- Each item must contain:
+  - "claim" (string)
+  - "category" (one of Statistic|Date|Financial|Technical|Attribution|Ranking)
+  - "context" (max 80 chars)
+- Extract up to {MAX_CLAIMS} claims.
 
 TEXT:
 {text[:5000]}
-
-JSON:"""
-
-    raw = call_gemini(prompt)
+"""
+    raw = call_llm(prompt)
     claims = json.loads(clean_json(raw))
     return claims[:MAX_CLAIMS]
 
@@ -228,91 +277,61 @@ def web_search(query: str, n: int = 4) -> list:
     try:
         with DDGS() as ddgs:
             for r in ddgs.text(query[:120], max_results=n):
-                results.append({
-                    "title": r.get("title", ""),
-                    "body":  r.get("body", ""),
-                    "href":  r.get("href", ""),
-                })
+                results.append(
+                    {
+                        "title": r.get("title", ""),
+                        "body": r.get("body", ""),
+                        "href": r.get("href", ""),
+                    }
+                )
     except Exception:
         pass
     return results
 
 
-def verify_claim(claim: dict, search_results: list) -> dict:
-    sources = "\n\n".join([
-        f"Source: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}"
-        for r in search_results
-    ]) if search_results else "No results found."
-
-    prompt = f"""You are a professional fact-checker. Use the search results below to verify the claim.
-
-CLAIM: "{claim['claim']}"
-CATEGORY: {claim['category']}
-
-SEARCH RESULTS:
-{sources}
-
-Return ONLY a JSON object — no markdown, no code fences.
-Fields:
-- "verdict": one of "Verified" | "Inaccurate" | "False" | "Unverifiable"
-- "explanation": 1-2 sentence summary (string)
-- "correct_value": corrected fact if wrong, else null
-- "source_url": best source URL (string or null)
-- "confidence": "High" | "Medium" | "Low"
-
-JSON:"""
-
-    raw = call_gemini(prompt)
-    result = json.loads(clean_json(raw))
-    result["claim"]    = claim["claim"]
-    result["category"] = claim["category"]
-    result["context"]  = claim.get("context", "")
-    return result
-
-
-# ── UI helpers ─────────────────────────────────────────────────────────────────
-
 def verify_claims_batch(claims: list, search_map: dict) -> list:
     payload = []
     for i, claim in enumerate(claims):
         hits = search_map.get(i, [])[:MAX_SOURCES_PER_CLAIM]
-        payload.append({
-            "id": i,
-            "claim": claim.get("claim", ""),
-            "category": claim.get("category", ""),
-            "context": claim.get("context", ""),
-            "sources": [
-                {
-                    "title": h.get("title", "")[:140],
-                    "url": h.get("href", ""),
-                    "snippet": h.get("body", "")[:240],
-                }
-                for h in hits
-            ],
-        })
+        payload.append(
+            {
+                "id": i,
+                "claim": claim.get("claim", ""),
+                "category": claim.get("category", ""),
+                "context": claim.get("context", ""),
+                "sources": [
+                    {
+                        "title": h.get("title", "")[:140],
+                        "url": h.get("href", ""),
+                        "snippet": h.get("body", "")[:240],
+                    }
+                    for h in hits
+                ],
+            }
+        )
 
     prompt = f"""You are a professional fact-checker.
-Verify each claim using its provided web sources.
+Verify each claim using the provided sources.
 
 Input JSON:
 {json.dumps(payload, ensure_ascii=True)}
 
-Return ONLY a JSON array with one object per input item, in any order.
-Each object must have:
-- "id": matching input id (integer)
-- "verdict": "Verified" | "Inaccurate" | "False" | "Unverifiable"
-- "explanation": 1-2 short sentences
-- "correct_value": corrected fact if wrong, else null
-- "source_url": best supporting/contradicting URL, else null
-- "confidence": "High" | "Medium" | "Low"
+Return ONLY a JSON array with one object per input item.
+Each object must include:
+- "id" (matching input id, integer)
+- "verdict" ("Verified" | "Inaccurate" | "False" | "Unverifiable")
+- "explanation" (1-2 short sentences)
+- "correct_value" (string or null)
+- "source_url" (string or null)
+- "confidence" ("High" | "Medium" | "Low")
+"""
 
-No markdown. No code fences."""
-
-    raw = call_gemini(prompt)
+    raw = call_llm(prompt)
     items = json.loads(clean_json(raw))
 
     by_id = {
-        int(item.get("id")): item for item in items
+        int(item.get("id")): item
+        for item in items
         if isinstance(item, dict) and str(item.get("id", "")).isdigit()
     }
 
@@ -329,25 +348,27 @@ No markdown. No code fences."""
         if confidence not in valid_conf:
             confidence = "Low"
 
-        normalized.append({
-            "claim": claim.get("claim", "Unknown"),
-            "category": claim.get("category", ""),
-            "context": claim.get("context", ""),
-            "verdict": verdict,
-            "explanation": item.get("explanation", "Insufficient evidence from available sources."),
-            "correct_value": item.get("correct_value"),
-            "source_url": item.get("source_url"),
-            "confidence": confidence,
-        })
+        normalized.append(
+            {
+                "claim": claim.get("claim", "Unknown"),
+                "category": claim.get("category", ""),
+                "context": claim.get("context", ""),
+                "verdict": verdict,
+                "explanation": item.get("explanation", "Insufficient evidence from available sources."),
+                "correct_value": item.get("correct_value"),
+                "source_url": item.get("source_url"),
+                "confidence": confidence,
+            }
+        )
 
     return normalized
 
 
 def verdict_badge(verdict: str) -> str:
     icons = {
-        "Verified":     ("✅", "badge-verified"),
-        "Inaccurate":   ("⚠️", "badge-inaccurate"),
-        "False":        ("❌", "badge-false"),
+        "Verified": ("✅", "badge-verified"),
+        "Inaccurate": ("⚠️", "badge-inaccurate"),
+        "False": ("❌", "badge-false"),
         "Unverifiable": ("🔵", "badge-unknown"),
     }
     icon, cls = icons.get(verdict, ("❓", "badge-unknown"))
@@ -355,8 +376,12 @@ def verdict_badge(verdict: str) -> str:
 
 
 def card_class(verdict: str) -> str:
-    return {"Verified": "verified", "Inaccurate": "inaccurate",
-            "False": "false", "Unverifiable": "unknown"}.get(verdict, "unknown")
+    return {
+        "Verified": "verified",
+        "Inaccurate": "inaccurate",
+        "False": "false",
+        "Unverifiable": "unknown",
+    }.get(verdict, "unknown")
 
 
 def render_cards(items):
@@ -364,31 +389,43 @@ def render_cards(items):
         st.info("No claims in this category.")
         return
     for r in items:
-        v     = r.get("verdict", "Unverifiable")
+        v = r.get("verdict", "Unverifiable")
         badge = verdict_badge(v)
-        cc    = card_class(v)
-        conf_color = {"High": "#34d399", "Medium": "#fbbf24", "Low": "#f87171"}.get(r.get("confidence", ""), "#94a3b8")
-        correct = f'<div class="correct-val">📌 Correct: {r["correct_value"]}</div>' if r.get("correct_value") else ""
-        source  = f'<div class="source-link">🔗 <a href="{r["source_url"]}" target="_blank">{r["source_url"][:70]}</a></div>' if r.get("source_url") else ""
-        cat_pill  = f'<span style="background:#334155;color:#94a3b8;padding:2px 8px;border-radius:10px;font-size:11px;">{r.get("category","")}</span>'
+        cc = card_class(v)
+        conf_color = {"High": "#34d399", "Medium": "#fbbf24", "Low": "#f87171"}.get(
+            r.get("confidence", ""),
+            "#94a3b8",
+        )
+        correct = (
+            f'<div class="correct-val">📌 Correct: {r["correct_value"]}</div>'
+            if r.get("correct_value")
+            else ""
+        )
+        source = (
+            f'<div class="source-link">🔗 <a href="{r["source_url"]}" target="_blank">{r["source_url"][:70]}</a></div>'
+            if r.get("source_url")
+            else ""
+        )
+        cat_pill = f'<span style="background:#334155;color:#94a3b8;padding:2px 8px;border-radius:10px;font-size:11px;">{r.get("category","")}</span>'
         conf_pill = f'<span style="background:#1e293b;color:{conf_color};padding:2px 8px;border-radius:10px;font-size:11px;border:1px solid {conf_color}40;">Confidence: {r.get("confidence","")}</span>'
-        st.markdown(f"""
+        st.markdown(
+            f"""
         <div class="claim-card {cc}">
             {badge} &nbsp; {cat_pill} &nbsp; {conf_pill}
             <div class="claim-text">"{r['claim']}"</div>
             <div class="explanation">{r.get('explanation', '')}</div>
             {correct}{source}
-        </div>""", unsafe_allow_html=True)
+        </div>""",
+            unsafe_allow_html=True,
+        )
 
-
-# ── Main page ──────────────────────────────────────────────────────────────────
 
 st.markdown("# 🔍 FactCheck Agent")
-st.markdown("Upload any PDF — report, press release, marketing doc — and get every claim verified against live web data.")
+st.markdown("Upload any PDF and get key claims verified against live web data.")
 st.divider()
 
 if not api_ready:
-    st.error("Gemini API key not configured. Add `GEMINI_API_KEY` in your Streamlit Cloud app secrets.")
+    st.error("API key not configured for selected provider. Add keys in sidebar or Streamlit secrets.")
     st.stop()
 
 uploaded_file = st.file_uploader("📂 Drop your PDF here", type=["pdf"])
@@ -400,22 +437,19 @@ if uploaded_file:
 
     if run:
         with st.status("Running fact-check pipeline...", expanded=True) as status:
-
-            # Step 1 — Read PDF
             st.write("📄 Reading PDF...")
             try:
                 uploaded_file.seek(0)
                 pdf_text = read_pdf(uploaded_file)
                 if not pdf_text:
-                    st.error("Couldn't extract text. Make sure it's not a scanned/image PDF.")
+                    st.error("Could not extract text. Ensure it is not image-only PDF.")
                     st.stop()
                 st.write(f"✅ Got **{len(pdf_text.split()):,} words** from `{uploaded_file.name}`")
             except Exception as e:
                 st.error(f"PDF error: {e}")
                 st.stop()
 
-            # Step 2 — Extract claims
-            st.write("🤖 Extracting claims with Gemini...")
+            st.write(f"🤖 Extracting claims with {provider}...")
             try:
                 claims = extract_claims(pdf_text)
                 st.write(f"✅ Found **{len(claims)} claims** to verify")
@@ -423,68 +457,76 @@ if uploaded_file:
                 st.error(f"Claim extraction failed: {e}")
                 st.stop()
 
-            # Step 3 — Verify claims
-            st.write("🌐 Searching the web and verifying...")
-            results  = []
+            st.write("🌐 Searching web sources...")
             progress = st.progress(0)
-
             search_map = {}
             for i, claim in enumerate(claims):
                 search_map[i] = web_search(claim.get("claim", ""), n=MAX_SOURCES_PER_CLAIM)
                 progress.progress((i + 1) / max(1, len(claims)))
-                time.sleep(0.4)
+                time.sleep(0.25)
 
-            st.write("🤖 Running one Gemini batch verification call...")
+            st.write(f"🤖 Verifying claims in one {provider} batch call...")
             try:
                 results = verify_claims_batch(claims, search_map)
             except Exception as ex:
-                results = [{
-                    "claim": claim.get("claim", "Unknown"),
-                    "category": claim.get("category", ""),
-                    "context": claim.get("context", ""),
-                    "verdict": "Unverifiable",
-                    "explanation": f"Batch verification error: {str(ex)[:140]}",
-                    "correct_value": None,
-                    "source_url": None,
-                    "confidence": "Low",
-                } for claim in claims]
+                results = [
+                    {
+                        "claim": claim.get("claim", "Unknown"),
+                        "category": claim.get("category", ""),
+                        "context": claim.get("context", ""),
+                        "verdict": "Unverifiable",
+                        "explanation": f"Batch verification error: {str(ex)[:160]}",
+                        "correct_value": None,
+                        "source_url": None,
+                        "confidence": "Low",
+                    }
+                    for claim in claims
+                ]
 
             status.update(label="✅ Done!", state="complete", expanded=False)
 
-        # Summary stats
         st.markdown("---")
-        counts   = {v: sum(1 for r in results if r["verdict"] == v) for v in ["Verified", "Inaccurate", "False", "Unverifiable"]}
+        counts = {
+            v: sum(1 for r in results if r["verdict"] == v)
+            for v in ["Verified", "Inaccurate", "False", "Unverifiable"]
+        }
         accuracy = round(counts["Verified"] / len(results) * 100) if results else 0
 
         c1, c2, c3, c4, c5 = st.columns(5)
         for col, num, label, color in [
-            (c1, len(results),         "Claims Checked", "#60a5fa"),
-            (c2, counts["Verified"],   "✅ Verified",    "#34d399"),
+            (c1, len(results), "Claims Checked", "#60a5fa"),
+            (c2, counts["Verified"], "✅ Verified", "#34d399"),
             (c3, counts["Inaccurate"], "⚠️ Inaccurate", "#fbbf24"),
-            (c4, counts["False"],      "❌ False",       "#f87171"),
-            (c5, f"{accuracy}%",       "Accuracy Rate",  "#a78bfa"),
+            (c4, counts["False"], "❌ False", "#f87171"),
+            (c5, f"{accuracy}%", "Accuracy Rate", "#a78bfa"),
         ]:
             with col:
-                st.markdown(f"""<div class="stat-box">
+                st.markdown(
+                    f"""<div class="stat-box">
                     <div class="stat-number" style="color:{color}">{num}</div>
                     <div class="stat-label">{label}</div></div>""",
-                    unsafe_allow_html=True)
+                    unsafe_allow_html=True,
+                )
 
-        # Result tabs
         st.markdown("---")
-        st.markdown("### 📋 Detailed Results")
-        tab_all, tab_false, tab_inaccurate, tab_verified = st.tabs([
-            f"All ({len(results)})",
-            f"❌ False ({counts['False']})",
-            f"⚠️ Inaccurate ({counts['Inaccurate']})",
-            f"✅ Verified ({counts['Verified']})",
-        ])
-        with tab_all:         render_cards(results)
-        with tab_false:       render_cards([r for r in results if r["verdict"] == "False"])
-        with tab_inaccurate:  render_cards([r for r in results if r["verdict"] == "Inaccurate"])
-        with tab_verified:    render_cards([r for r in results if r["verdict"] == "Verified"])
+        st.markdown("### Detailed Results")
+        tab_all, tab_false, tab_inaccurate, tab_verified = st.tabs(
+            [
+                f"All ({len(results)})",
+                f"❌ False ({counts['False']})",
+                f"⚠️ Inaccurate ({counts['Inaccurate']})",
+                f"✅ Verified ({counts['Verified']})",
+            ]
+        )
+        with tab_all:
+            render_cards(results)
+        with tab_false:
+            render_cards([r for r in results if r["verdict"] == "False"])
+        with tab_inaccurate:
+            render_cards([r for r in results if r["verdict"] == "Inaccurate"])
+        with tab_verified:
+            render_cards([r for r in results if r["verdict"] == "Verified"])
 
-        # Export
         st.markdown("---")
         st.download_button(
             "⬇️ Download Full Report (JSON)",
