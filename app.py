@@ -16,13 +16,7 @@ st.set_page_config(
 
 # Load API key from Streamlit secrets (set in Streamlit Cloud dashboard)
 MODEL_NAME = "gemini-2.0-flash-lite"
-try:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=API_KEY)
-    api_ready = True
-except Exception:
-    client = None
-    api_ready = False
+DEFAULT_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
 # ── Styles ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -88,10 +82,27 @@ with st.sidebar:
     st.markdown("Verifies claims in any PDF using **Gemini 2.0 Flash-Lite** + live web search.")
     st.divider()
 
+    user_api_key = st.text_input(
+        "Gemini API key (optional override)",
+        type="password",
+        help="Use your own key if the shared app key is rate-limited.",
+    ).strip()
+    active_api_key = user_api_key or DEFAULT_API_KEY
+
+    try:
+        client = genai.Client(api_key=active_api_key) if active_api_key else None
+        api_ready = client is not None
+    except Exception:
+        client = None
+        api_ready = False
+
     if api_ready:
-        st.success("✅ Gemini API Connected")
+        if user_api_key:
+            st.success("✅ Gemini API Connected (personal key)")
+        else:
+            st.success("✅ Gemini API Connected")
     else:
-        st.error("❌ API key missing — add `GEMINI_API_KEY` in Streamlit Cloud secrets")
+        st.error("❌ API key missing/invalid — add `GEMINI_API_KEY` in Streamlit secrets or paste a personal key above.")
 
     st.divider()
     st.markdown("**How it works:**")
@@ -122,6 +133,7 @@ def call_gemini(prompt: str, retries: int = 3) -> str:
     if client is None:
         raise RuntimeError("Gemini client is not initialized.")
 
+    last_error = ""
     for attempt in range(retries):
         try:
             response = client.models.generate_content(
@@ -146,13 +158,19 @@ def call_gemini(prompt: str, retries: int = 3) -> str:
             raise RuntimeError("Gemini returned an empty response.")
         except Exception as e:
             err = str(e)
+            last_error = err
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
                 wait = 20 * (attempt + 1)  # 20s, 40s, 60s
                 st.warning(f"Rate limit hit — waiting {wait}s before retry {attempt+1}/{retries}...")
                 time.sleep(wait)
             else:
                 raise
-    raise RuntimeError("Gemini API failed after all retries. Try again in a minute.")
+    if "429" in last_error or "RESOURCE_EXHAUSTED" in last_error:
+        raise RuntimeError(
+            "Gemini API quota/rate limit reached (HTTP 429). "
+            "Wait for reset in AI Studio Usage, or use another API key."
+        )
+    raise RuntimeError(f"Gemini API failed after all retries. Last error: {last_error[:180]}")
 
 
 def clean_json(raw: str) -> str:
