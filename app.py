@@ -4,6 +4,7 @@ import pdfplumber
 import json
 import time
 import io
+import re
 from duckduckgo_search import DDGS
 
 # ── Setup ──────────────────────────────────────────────────────────────────────
@@ -101,6 +102,17 @@ with st.sidebar:
             st.success("✅ Gemini API Connected (personal key)")
         else:
             st.success("✅ Gemini API Connected")
+
+        if st.button("Test API key now", use_container_width=True):
+            try:
+                probe = client.models.generate_content(
+                    model=MODEL_NAME,
+                    contents="Reply with exactly: OK",
+                )
+                probe_text = (getattr(probe, "text", None) or "").strip()
+                st.success(f"Gemini test passed: {probe_text or 'OK'}")
+            except Exception as probe_err:
+                st.error(f"Gemini test failed: {probe_err}")
     else:
         st.error("❌ API key missing/invalid — add `GEMINI_API_KEY` in Streamlit secrets or paste a personal key above.")
 
@@ -160,7 +172,11 @@ def call_gemini(prompt: str, retries: int = 3) -> str:
             err = str(e)
             last_error = err
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
-                wait = 20 * (attempt + 1)  # 20s, 40s, 60s
+                retry_hint = re.search(r"retry in\s+([0-9]+(?:\.[0-9]+)?)s", err, flags=re.IGNORECASE)
+                if retry_hint:
+                    wait = max(5, int(float(retry_hint.group(1)) + 2))
+                else:
+                    wait = 20 * (attempt + 1)  # 20s, 40s, 60s fallback
                 st.warning(f"Rate limit hit — waiting {wait}s before retry {attempt+1}/{retries}...")
                 time.sleep(wait)
             else:
