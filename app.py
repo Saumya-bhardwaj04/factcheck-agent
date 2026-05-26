@@ -70,10 +70,11 @@ st.markdown(
 
     .stButton > button {
         background: linear-gradient(135deg, #0d9488, #0891b2);
-        color: white; border: none; border-radius: 8px;
+        color: #ffffff !important; border: none; border-radius: 8px;
         font-weight: 600; padding: 10px 28px;
         font-size: 15px; width: 100%;
     }
+    .stButton > button * { color: #ffffff !important; }
     section[data-testid="stSidebar"] { background:#1e293b !important; }
     section[data-testid="stSidebar"] * { color:#cbd5e1 !important; }
 </style>
