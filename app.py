@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import time
 
 import pdfplumber
@@ -19,21 +20,32 @@ GROQ_MODEL = "llama-3.1-8b-instant"
 MAX_CLAIMS = 5
 MAX_SOURCES_PER_CLAIM = 2
 
-DEFAULT_GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+try:
+    DEFAULT_GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+except Exception:
+    DEFAULT_GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 
 st.markdown(
     """
 <style>
-    .stApp { background-color: #0f172a; }
+    /* Global styles */
+    .stApp { background-color: #0f172a; font-family: 'Inter', sans-serif; }
 
     .claim-card {
         background: #1e293b;
         border-radius: 12px;
-        padding: 18px 22px;
-        margin-bottom: 14px;
+        padding: 20px 24px;
+        margin-bottom: 16px;
         border-left: 5px solid #64748b;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
+    .claim-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+    }
+    
     .verified   { border-left-color: #10b981 !important; }
     .inaccurate { border-left-color: #f59e0b !important; }
     .false      { border-left-color: #ef4444 !important; }
@@ -41,42 +53,99 @@ st.markdown(
 
     .verdict-badge {
         display: inline-block;
-        padding: 3px 12px;
+        padding: 4px 12px;
         border-radius: 20px;
-        font-size: 12px;
-        font-weight: 700;
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
         letter-spacing: 0.5px;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
     }
-    .badge-verified   { background:#064e3b; color:#34d399; }
-    .badge-inaccurate { background:#451a03; color:#fbbf24; }
-    .badge-false      { background:#450a0a; color:#f87171; }
-    .badge-unknown    { background:#1e1b4b; color:#a5b4fc; }
+    .badge-verified   { background:#064e3b; color:#34d399; border: 1px solid #047857;}
+    .badge-inaccurate { background:#451a03; color:#fbbf24; border: 1px solid #b45309;}
+    .badge-false      { background:#450a0a; color:#f87171; border: 1px solid #b91c1c;}
+    .badge-unknown    { background:#1e1b4b; color:#a5b4fc; border: 1px solid #4338ca;}
 
-    .claim-text  { font-size:15px; color:#e2e8f0; font-weight:500; margin-bottom:6px; }
-    .explanation { font-size:13px; color:#94a3b8; line-height:1.6; }
-    .correct-val { font-size:13px; color:#6ee7b7; margin-top:6px; }
-    .source-link { font-size:11px; color:#60a5fa; margin-top:4px; }
+    .claim-text  { font-size:16px; color:#f8fafc; font-weight:600; margin-bottom:8px; line-height: 1.4; }
+    .explanation { font-size:14px; color:#cbd5e1; line-height:1.6; }
+    .correct-val { font-size:13px; color:#6ee7b7; margin-top:8px; font-weight: 500; background: #064e3b40; padding: 6px 10px; border-radius: 6px;}
+    .source-link { font-size:12px; color:#60a5fa; margin-top:8px; display: inline-flex; align-items: center; gap: 4px;}
+    .source-link a { color: #60a5fa; text-decoration: none; transition: color 0.2s;}
+    .source-link a:hover { color: #93c5fd; text-decoration: underline; }
+
+    .cat-pill {
+        background:#334155; color:#e2e8f0; padding:4px 10px; 
+        border-radius:12px; font-size:11px; font-weight: 600;
+        border: 1px solid #475569;
+    }
+    .conf-pill {
+        padding:4px 10px; border-radius:12px; font-size:11px; font-weight: 600;
+        background:#0f172a;
+    }
 
     .stat-box {
-        background:#1e293b; border-radius:10px;
-        padding:16px; text-align:center;
+        background: linear-gradient(145deg, #1e293b, #0f172a); 
+        border-radius: 12px;
+        padding: 20px 16px; 
+        text-align: center;
+        border: 1px solid #334155;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        transition: transform 0.2s ease;
     }
-    .stat-number { font-size:28px; font-weight:700; }
-    .stat-label  { font-size:12px; color:#94a3b8; margin-top:2px; }
+    .stat-box:hover {
+        transform: translateY(-2px);
+    }
+    .stat-number { font-size:32px; font-weight:800; line-height: 1.2; }
+    .stat-label  { font-size:13px; color:#94a3b8; margin-top:4px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;}
 
-    h1, h2, h3 { color:#f1f5f9 !important; }
+    h1 { color:#f8fafc !important; font-weight: 800 !important; font-size: 2.5rem !important; margin-bottom: 0.5rem !important;}
+    h2, h3 { color:#f1f5f9 !important; font-weight: 700 !important;}
     p { color:#94a3b8 !important; }
 
     .stButton > button {
-        background: linear-gradient(135deg, #0d9488, #0891b2);
-        color: #ffffff !important; border: none; border-radius: 8px;
-        font-weight: 600; padding: 10px 28px;
-        font-size: 15px; width: 100%;
+        background: linear-gradient(135deg, #0d9488 0%, #0284c7 100%);
+        color: #ffffff !important; 
+        border: none; 
+        border-radius: 8px;
+        font-weight: 600; 
+        padding: 10px 28px;
+        font-size: 16px; 
+        width: 100%;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        transition: all 0.2s ease;
+    }
+    .stButton > button:hover {
+        background: linear-gradient(135deg, #0f766e 0%, #0369a1 100%);
+        box-shadow: 0 6px 8px -1px rgba(0,0,0,0.2);
+        transform: translateY(-1px);
+    }
+    .stButton > button:active {
+        transform: translateY(1px);
     }
     .stButton > button * { color: #ffffff !important; }
-    section[data-testid="stSidebar"] { background:#1e293b !important; }
+    
+    section[data-testid="stSidebar"] { border-right: 1px solid #334155; background:#1e293b !important;}
     section[data-testid="stSidebar"] * { color:#cbd5e1 !important; }
+    
+    /* Make the uploader stand out a bit more */
+    div[data-testid="stFileUploader"] {
+        background: #1e293b;
+        border-radius: 12px;
+        border: 1px dashed #475569;
+        padding: 5px;
+    }
+    
+    /* Center text in header */
+    .hero-header {
+        text-align: center;
+        padding: 20px 0 30px 0;
+    }
+    .hero-subtitle {
+        font-size: 1.1rem !important;
+        color: #94a3b8 !important;
+        max-width: 600px;
+        margin: 0 auto;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -123,10 +192,14 @@ with st.sidebar:
 
     st.divider()
     st.markdown("**How it works:**")
-    st.markdown("1. Upload a PDF")
-    st.markdown("2. LLM extracts key verifiable claims")
-    st.markdown("3. Each claim is web searched")
-    st.markdown("4. LLM returns verdicts in one batch")
+    st.markdown("""
+<div style="font-size: 14px; line-height: 1.8;">
+    <b>1.</b> 📄 Upload a PDF<br>
+    <b>2.</b> 🤖 LLM extracts key claims<br>
+    <b>3.</b> 🌐 Live web search verification<br>
+    <b>4.</b> 🎯 Rapid batched verdicts
+</div>
+""", unsafe_allow_html=True)
 
 
 def call_llm(prompt: str, retries: int = 3) -> str:
@@ -315,8 +388,8 @@ def render_cards(items):
             if r.get("source_url")
             else ""
         )
-        cat_pill = f'<span style="background:#334155;color:#94a3b8;padding:2px 8px;border-radius:10px;font-size:11px;">{r.get("category","")}</span>'
-        conf_pill = f'<span style="background:#1e293b;color:{conf_color};padding:2px 8px;border-radius:10px;font-size:11px;border:1px solid {conf_color}40;">Confidence: {r.get("confidence","")}</span>'
+        cat_pill = f'<span class="cat-pill">{r.get("category","")}</span>'
+        conf_pill = f'<span class="conf-pill" style="color:{conf_color}; border:1px solid {conf_color}40;">Confidence: {r.get("confidence","")}</span>'
         st.markdown(
             f"""
         <div class="claim-card {cc}">
@@ -329,8 +402,15 @@ def render_cards(items):
         )
 
 
-st.markdown("# 🔍 FactCheck Agent")
-st.markdown("Upload any PDF and get key claims verified against live web data.")
+st.markdown(
+    """
+    <div class="hero-header">
+        <h1>🔍 FactCheck Agent</h1>
+        <p class="hero-subtitle">Upload any document and get key claims instantly verified against live web data using LLMs.</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 st.divider()
 
 if not api_ready:
