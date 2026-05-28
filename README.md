@@ -20,7 +20,7 @@ Automated PDF fact-checking app built with Streamlit.
 ## Local setup
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/factcheck-agent.git
+git clone https://github.com/Saumya-bhardwaj04/factcheck-agent.git
 cd factcheck-agent
 pip install -r requirements.txt
 streamlit run app.py
