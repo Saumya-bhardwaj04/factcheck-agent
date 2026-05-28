@@ -492,12 +492,19 @@ def build_pdf_report(results: list) -> bytes:
     pdf.cell(0, 8, f"Verified: {summary['Verified']} | Inaccurate: {summary['Inaccurate']} | False: {summary['False']} | Unverifiable: {summary['Unverifiable']}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
+    content_width = pdf.w - pdf.l_margin - pdf.r_margin
+
     def safe_text(value: str) -> str:
         return str(value).encode("latin-1", "replace").decode("latin-1")
 
+    def normalize_text(text: str) -> str:
+        text = safe_text(text)
+        text = text.replace("\u00a0", " ").replace("\u200b", "")
+        return " ".join(text.split())
+
     def split_long_tokens(text: str, max_len: int = 30) -> str:
         tokens = []
-        for token in str(text).split():
+        for token in normalize_text(text).split():
             if len(token) > max_len:
                 chunks = [token[i : i + max_len] for i in range(0, len(token), max_len)]
                 token = " ".join(chunks)
@@ -511,8 +518,9 @@ def build_pdf_report(results: list) -> bytes:
         pdf.cell(0, 6, safe_text(f"{label}:"), new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", size=11)
         normalized = split_long_tokens(text)
-        for line in textwrap.wrap(normalized, width=96, break_long_words=True, break_on_hyphens=False):
-            pdf.multi_cell(0, 6, safe_text(line))
+        pdf.set_x(pdf.l_margin)
+        for line in textwrap.wrap(normalized, width=80, break_long_words=True, break_on_hyphens=False):
+            pdf.multi_cell(content_width, 6, safe_text(line), new_x="LMARGIN", new_y="NEXT")
 
     for idx, r in enumerate(results, start=1):
         pdf.set_font("Helvetica", size=12, style="B")
