@@ -493,31 +493,36 @@ def build_pdf_report(results: list) -> bytes:
     pdf.ln(2)
 
     def safe_text(value: str) -> str:
-        return value.encode("latin-1", "replace").decode("latin-1")
+        return str(value).encode("latin-1", "replace").decode("latin-1")
+
+    def split_long_tokens(text: str, max_len: int = 30) -> str:
+        tokens = []
+        for token in str(text).split():
+            if len(token) > max_len:
+                chunks = [token[i : i + max_len] for i in range(0, len(token), max_len)]
+                token = " ".join(chunks)
+            tokens.append(token)
+        return " ".join(tokens)
+
+    def write_wrapped(label: str, text: str) -> None:
+        if not text:
+            return
+        pdf.set_font("Helvetica", size=11, style="B")
+        pdf.cell(0, 6, safe_text(f"{label}:"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", size=11)
+        normalized = split_long_tokens(text)
+        for line in textwrap.wrap(normalized, width=96, break_long_words=True, break_on_hyphens=False):
+            pdf.multi_cell(0, 6, safe_text(line))
 
     for idx, r in enumerate(results, start=1):
         pdf.set_font("Helvetica", size=12, style="B")
         pdf.cell(0, 8, safe_text(f"{idx}. {r.get('verdict', 'Unverifiable')}"), new_x="LMARGIN", new_y="NEXT")
         pdf.set_font("Helvetica", size=11)
 
-        claim = r.get("claim", "")
-        for line in textwrap.wrap(claim, width=96):
-            pdf.multi_cell(0, 6, safe_text(f"Claim: {line}"))
-
-        explanation = r.get("explanation", "")
-        if explanation:
-            for line in textwrap.wrap(explanation, width=96):
-                pdf.multi_cell(0, 6, safe_text(f"Reason: {line}"))
-
-        correct_value = r.get("correct_value")
-        if correct_value:
-            for line in textwrap.wrap(str(correct_value), width=96):
-                pdf.multi_cell(0, 6, safe_text(f"Correct: {line}"))
-
-        source_url = r.get("source_url")
-        if source_url:
-            for line in textwrap.wrap(str(source_url), width=96):
-                pdf.multi_cell(0, 6, safe_text(f"Source: {line}"))
+        write_wrapped("Claim", r.get("claim", ""))
+        write_wrapped("Reason", r.get("explanation", ""))
+        write_wrapped("Correct", r.get("correct_value"))
+        write_wrapped("Source", r.get("source_url"))
 
         pdf.ln(2)
 
