@@ -1,11 +1,13 @@
 import io
 import json
 import os
+import textwrap
 import time
 
 import pdfplumber
 import streamlit as st
 from duckduckgo_search import DDGS
+from fpdf import FPDF
 from groq import Groq
 
 
@@ -471,6 +473,57 @@ def render_cards(items):
         </div>""", unsafe_allow_html=True)
 
 
+def build_pdf_report(results: list) -> bytes:
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=16, style="B")
+    pdf.cell(0, 10, "FactCheck Agent Report", new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", size=11)
+    summary = {
+        "Verified": sum(1 for r in results if r.get("verdict") == "Verified"),
+        "Inaccurate": sum(1 for r in results if r.get("verdict") == "Inaccurate"),
+        "False": sum(1 for r in results if r.get("verdict") == "False"),
+        "Unverifiable": sum(1 for r in results if r.get("verdict") == "Unverifiable"),
+    }
+    pdf.cell(0, 8, f"Claims checked: {len(results)}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Verified: {summary['Verified']} | Inaccurate: {summary['Inaccurate']} | False: {summary['False']} | Unverifiable: {summary['Unverifiable']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+    def safe_text(value: str) -> str:
+        return value.encode("latin-1", "replace").decode("latin-1")
+
+    for idx, r in enumerate(results, start=1):
+        pdf.set_font("Helvetica", size=12, style="B")
+        pdf.cell(0, 8, safe_text(f"{idx}. {r.get('verdict', 'Unverifiable')}"), new_x="LMARGIN", new_y="NEXT")
+        pdf.set_font("Helvetica", size=11)
+
+        claim = r.get("claim", "")
+        for line in textwrap.wrap(claim, width=96):
+            pdf.multi_cell(0, 6, safe_text(f"Claim: {line}"))
+
+        explanation = r.get("explanation", "")
+        if explanation:
+            for line in textwrap.wrap(explanation, width=96):
+                pdf.multi_cell(0, 6, safe_text(f"Reason: {line}"))
+
+        correct_value = r.get("correct_value")
+        if correct_value:
+            for line in textwrap.wrap(str(correct_value), width=96):
+                pdf.multi_cell(0, 6, safe_text(f"Correct: {line}"))
+
+        source_url = r.get("source_url")
+        if source_url:
+            for line in textwrap.wrap(str(source_url), width=96):
+                pdf.multi_cell(0, 6, safe_text(f"Source: {line}"))
+
+        pdf.ln(2)
+
+    return pdf.output(dest="S").encode("latin-1")
+
+
 # ── Main page ──────────────────────────────────────────────────────────────────
 
 st.markdown("""
@@ -581,9 +634,10 @@ if uploaded_file:
         with tab_verified:   render_cards([r for r in results if r["verdict"] == "Verified"])
 
         st.markdown("---")
+        pdf_bytes = build_pdf_report(results)
         st.download_button(
-            "⬇️ Download Full Report (JSON)",
-            data=json.dumps(results, indent=2),
-            file_name="factcheck_report.json",
-            mime="application/json",
+            "⬇️ Download Full Report (PDF)",
+            data=pdf_bytes,
+            file_name="factcheck_report.pdf",
+            mime="application/pdf",
         )
