@@ -15,7 +15,7 @@ st.set_page_config(
     page_title="FactCheck Agent",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 GROQ_MODEL = "llama-3.1-8b-instant"
