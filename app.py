@@ -104,14 +104,22 @@ st.markdown("""
     }
 
     /* ── File uploader ── */
-    div[data-testid="stFileUploader"] {
-        background: #0d1729;
-        border-radius: 14px;
-        border: 1.5px dashed #1e3a5f;
-        padding: 6px 8px;
-        transition: border-color 0.2s;
+    @keyframes slideBorder {
+        to { background-position: 200% center; }
     }
-    div[data-testid="stFileUploader"]:hover { border-color: #0ea5e9; }
+    div[data-testid="stFileUploader"] {
+        background: linear-gradient(#0d1729, #0d1729) padding-box,
+                    linear-gradient(90deg, #1e2d45 0%, #1e2d45 25%, #38bdf8 50%, #1e2d45 75%, #1e2d45 100%) border-box;
+        background-size: 200% auto;
+        border: 1.5px solid transparent !important;
+        border-radius: 14px;
+        padding: 6px 8px;
+        animation: slideBorder 3s linear infinite;
+        transition: transform 0.2s;
+    }
+    div[data-testid="stFileUploader"]:hover {
+        transform: scale(1.02);
+    }
     div[data-testid="stFileUploader"] * { color: #94a3b8 !important; }
 
     /* ── Button ── */
