@@ -104,25 +104,30 @@ st.markdown("""
     }
 
     /* ── File uploader ── */
-    @property --angle {
-        syntax: '<angle>';
-        initial-value: 0deg;
-        inherits: false;
-    }
-    @keyframes spinBorder {
-        to { --angle: 360deg; }
+    @keyframes scanLine {
+        0% { top: -100%; opacity: 0; }
+        10% { opacity: 1; }
+        90% { opacity: 1; }
+        100% { top: 100%; opacity: 0; }
     }
     div[data-testid="stFileUploader"] {
-        background: linear-gradient(#0d1729, #0d1729) padding-box,
-                    conic-gradient(from var(--angle), #1e2d45 0deg, #1e2d45 300deg, #0284c7 345deg, #7dd3fc 360deg) border-box;
-        border: 3px solid transparent !important;
+        position: relative;
+        background: #0d1729 !important;
+        border: 2px dashed #1e2d45 !important;
         border-radius: 14px;
         padding: 6px 8px;
-        animation: spinBorder 6s linear infinite;
-        transition: transform 0.2s, box-shadow 0.2s;
+        overflow: hidden;
+        transition: box-shadow 0.3s ease;
+    }
+    div[data-testid="stFileUploader"]::after {
+        content: '';
+        position: absolute;
+        left: 0; right: 0; height: 100%;
+        background: linear-gradient(to bottom, transparent, rgba(2, 132, 199, 0.1) 80%, rgba(125, 211, 252, 0.5) 100%);
+        pointer-events: none;
+        animation: scanLine 3.5s linear infinite;
     }
     div[data-testid="stFileUploader"]:hover {
-        transform: scale(1.02);
         box-shadow: 0 4px 20px #0ea5e920;
     }
     div[data-testid="stFileUploader"] * { color: #94a3b8 !important; }
