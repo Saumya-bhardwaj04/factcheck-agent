@@ -114,11 +114,11 @@ st.markdown("""
     }
     div[data-testid="stFileUploader"] {
         background: linear-gradient(#0d1729, #0d1729) padding-box,
-                    conic-gradient(from var(--angle), #1e2d45 0deg, #1e2d45 270deg, #0284c7 330deg, #38bdf8 360deg) border-box;
+                    conic-gradient(from var(--angle), #1e2d45 0deg, #1e2d45 300deg, #0284c7 345deg, #7dd3fc 360deg) border-box;
         border: 3px solid transparent !important;
         border-radius: 14px;
         padding: 6px 8px;
-        animation: spinBorder 3s linear infinite;
+        animation: spinBorder 6s linear infinite;
         transition: transform 0.2s, box-shadow 0.2s;
     }
     div[data-testid="stFileUploader"]:hover {
