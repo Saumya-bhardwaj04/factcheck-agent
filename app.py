@@ -244,6 +244,11 @@ st.markdown("""
         .stat-number { font-size: 1.5rem !important; }
         .claim-card { padding: 16px 18px; }
     }
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #080f1e; }
+    ::-webkit-scrollbar-thumb { background: #1e2d45; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2d4a6e; }
 </style>
 """, unsafe_allow_html=True)
 
