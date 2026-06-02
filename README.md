@@ -11,7 +11,7 @@ Automated PDF fact-checking app built with Streamlit.
 
 ## Tech stack
 
-- Streamlit
+- Streamlit (python library)
 - Groq SDK (`llama-3.1-8b-instant`) as default LLM
 - Google GenAI SDK as optional fallback
 - pdfplumber
