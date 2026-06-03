@@ -633,7 +633,7 @@ if uploaded_file:
                     "confidence":    "Low",
                 } for claim in claims]
 
-            status.update(label="✅ Done!", state="complete", expanded=False)
+            status.update(label="✅ Fact Check Complete!", state="complete", expanded=False)
 
         # Stats
         st.markdown("---")
