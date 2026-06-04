@@ -4,7 +4,7 @@ Automated PDF fact-checking app built with Streamlit.
 
 ## What it does
 
-1. Extracts key verifiable claims from a PDF
+1. Extracts key verifiable claims from a PDF using pdfplumber
 2. Searches the web for each claim
 3. Verifies claims with an LLM (Groq by default, Gemini optional)
 4. Returns verdicts: Verified / Inaccurate / False / Unverifiable
