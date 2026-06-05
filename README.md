@@ -38,4 +38,4 @@ GEMINI_API_KEY = "AIza..." # optional fallback
 ## Get API keys
 
 - Groq (recommended): https://console.groq.com/keys
-- Gemini: https://aistudio.google.com/app/apikey
+- Gemini (optional): https://aistudio.google.com/app/apikey
