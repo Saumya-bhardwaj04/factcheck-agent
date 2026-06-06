@@ -132,11 +132,15 @@ st.markdown("""
     }
     div[data-testid="stFileUploader"] * { color: #94a3b8 !important; }
     .upload-title {
-        color: #e2e8f0;
-        font-size: 1.25rem;
-        font-weight: 700;
+        font-size: clamp(1.4rem, 3vw, 1.8rem);
+        font-weight: 900;
+        letter-spacing: -0.5px;
         text-align: center;
         margin: 0.25rem 0 1rem;
+        background: linear-gradient(135deg, #e2e8f0 0%, #7dd3fc 60%, #818cf8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
     }
 
     /* ── Button ── */
