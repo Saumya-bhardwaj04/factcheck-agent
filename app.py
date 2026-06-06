@@ -131,6 +131,13 @@ st.markdown("""
         box-shadow: 0 4px 20px #0ea5e920;
     }
     div[data-testid="stFileUploader"] * { color: #94a3b8 !important; }
+    .upload-title {
+        color: #e2e8f0;
+        font-size: 1.25rem;
+        font-weight: 700;
+        text-align: center;
+        margin: 0.25rem 0 1rem;
+    }
 
     /* ── Button ── */
     .stButton > button {
@@ -578,6 +585,8 @@ st.divider()
 if not api_ready:
     st.error("Groq API key not configured. Add `GROQ_API_KEY` in Streamlit secrets.")
     st.stop()
+
+st.markdown('<div class="upload-title">Get your file uploaded today</div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("📂 Drop your PDF here", type=["pdf"], label_visibility="collapsed")
 
