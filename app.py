@@ -111,13 +111,16 @@ st.markdown("""
         100% { top: 100%; opacity: 0; }
     }
     div[data-testid="stFileUploader"] {
-        position: relative;
-        background: #0d1729 !important;
-        border: 2px dashed #1e2d45 !important;
-        border-radius: 14px;
-        padding: 6px 8px;
-        overflow: hidden;
-        transition: box-shadow 0.3s ease;
+    position: relative;
+    background: #0d1729 !important;
+    border: 2px dashed transparent !important;
+    border-radius: 14px;
+    padding: 6px 8px;
+    overflow: hidden;
+    transition: box-shadow 0.3s ease;
+    background-clip: padding-box !important;
+    outline: 2px solid transparent;
+    box-shadow: 0 0 0 2px #7dd3fc, 0 0 0 3px #818cf8;
     }
     div[data-testid="stFileUploader"]::after {
         content: '';
