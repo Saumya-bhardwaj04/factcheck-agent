@@ -391,10 +391,17 @@ st.markdown("""
         .claim-card { padding: 16px 18px; }
     }
 
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: #04080f; }
-    ::-webkit-scrollbar-thumb { background: #1e2d45; border-radius: 10px; }
-    ::-webkit-scrollbar-thumb:hover { background: #2d4a6e; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #04080f; border-radius: 10px; }
+    ::-webkit-scrollbar-thumb { 
+    background: linear-gradient(180deg, #0284c7, #1e3a5f); 
+    border-radius: 10px; 
+    border: 1px solid rgba(14, 165, 233, 0.15);
+    }
+    ::-webkit-scrollbar-thumb:hover { 
+    background: linear-gradient(180deg, #38bdf8, #0369a1); 
+    }
+    ::-webkit-scrollbar-corner { background: #04080f; }
 </style>
 """, unsafe_allow_html=True)
 
